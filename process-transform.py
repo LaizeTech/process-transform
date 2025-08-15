@@ -2,6 +2,7 @@ import boto3
 import pandas as pd
 import os
 from datetime import datetime
+import re
 
 # Configurações
 BUCKET_ENTRADA = "meu-bucket-entrada"
@@ -64,7 +65,8 @@ def processXLSX(file_path, output_path):
         "Valor Total": "precoVenda",
         "Desconto do Vendedor": "totalDesconto",
         "Nome do produto": "nomeProduto",
-        "Quantidade do produto": "quantidade"
+        "Quantidade do produto": "quantidade",
+        "Nome da variação": "caracteristicaProduto"
     }
 
     colunas_existentes = {orig: novo for orig, novo in colunas_mapeadas.items() if orig in df_filtrado.columns}
@@ -72,6 +74,14 @@ def processXLSX(file_path, output_path):
     df_selecionado.to_csv(output_path, index=False, encoding="utf-8-sig")
 
 def processCSV(file_path, output_path):
+
+    # Função para extrair característica (entre parênteses no final do nome)
+    def extrair_caracteristica(nome_produto):
+        if pd.isna(nome_produto):
+            return None
+        match = re.search(r"\(([^()]*)\)\s*$", nome_produto.strip())
+        return match.group(1) if match else None
+
     df = pd.read_csv(file_path, sep=';', encoding='latin1')
 
     # Dados da venda
@@ -87,7 +97,12 @@ def processCSV(file_path, output_path):
 
     # Dados dos produtos
     df_produtos = df[df['Nome do Produto'].notna()].copy()
-    df_produtos = df_produtos[['Número do Pedido', 'Nome do Produto', 'Quantidade Comprada']]
+
+    # Criar coluna caracteristicaProduto e limpar nomeProduto
+    df_produtos['caracteristicaProduto'] = df_produtos['Nome do Produto'].apply(extrair_caracteristica)
+    df_produtos['Nome do Produto'] = df_produtos['Nome do Produto'].str.replace(r"\s*\([^()]*\)\s*$", "", regex=True)
+
+    df_produtos = df_produtos[['Número do Pedido', 'Nome do Produto', 'Quantidade Comprada', 'caracteristicaProduto']]
     df_produtos.rename(columns={
         'Número do Pedido': 'numeroPedido',
         'Nome do Produto': 'nomeProduto',
