@@ -63,24 +63,43 @@ def processXLSX(file_path, output_path):
         "ID do pedido": "numeroPedido",
         "Data de criação do pedido": "dtVenda",
         "Valor Total": "precoVenda",
-        "Desconto do Vendedor": "totalDesconto",
-        "Nome do produto": "nomeProduto",
-        "Quantidade do produto": "quantidade",
+        "Desconto do vendedor": "totalDesconto",
+        "Nome do Produto": "nomeProduto",
+        "Quantidade do Produto": "quantidade",
         "Nome da variação": "caracteristicaProduto"
     }
 
     colunas_existentes = {orig: novo for orig, novo in colunas_mapeadas.items() if orig in df_filtrado.columns}
-    df_selecionado = df_filtrado[list(colunas_existentes.keys())].rename(columns=colunas_mapeadas)
+    df_selecionado = df_filtrado[list(colunas_existentes.keys())].rename(columns=colunas_existentes)
     df_selecionado.to_csv(output_path, index=False, encoding="utf-8-sig")
 
 def processCSV(file_path, output_path):
 
     # Função para extrair característica (entre parênteses no final do nome)
-    def extrair_caracteristica(nome_produto):
+    def extrair_caracteristica_e_nome(nome_produto):
         if pd.isna(nome_produto):
-            return None
-        match = re.search(r"\(([^()]*)\)\s*$", nome_produto.strip())
-        return match.group(1) if match else None
+            return None, nome_produto
+        s = nome_produto.strip()
+        end = s.rfind(')')
+        if end == -1:
+            return None, s
+        # Encontrar o '(' correspondente ao último ')'
+        count = 0
+        start = -1
+        for i in range(end, -1, -1):
+            if s[i] == ')':
+                count += 1
+            elif s[i] == '(':
+                count -= 1
+                if count == 0:
+                    start = i
+                    break
+        if start == -1:
+            return None, s
+        # Extrair característica e nome limpo
+        caracteristica = s[start+1:end]
+        nome_limpo = (s[:start] + s[end+1:]).strip()
+        return caracteristica, nome_limpo
 
     df = pd.read_csv(file_path, sep=';', encoding='latin1')
 
@@ -98,16 +117,16 @@ def processCSV(file_path, output_path):
     # Dados dos produtos
     df_produtos = df[df['Nome do Produto'].notna()].copy()
 
-    # Criar coluna caracteristicaProduto e limpar nomeProduto
-    df_produtos['caracteristicaProduto'] = df_produtos['Nome do Produto'].apply(extrair_caracteristica)
-    df_produtos['Nome do Produto'] = df_produtos['Nome do Produto'].str.replace(r"\s*\([^()]*\)\s*$", "", regex=True)
+    df_produtos[['caracteristicaProduto', 'nomeProduto']] = df_produtos['Nome do Produto'].apply(
+        lambda x: pd.Series(extrair_caracteristica_e_nome(x))
+    )
 
-    df_produtos = df_produtos[['Número do Pedido', 'Nome do Produto', 'Quantidade Comprada', 'caracteristicaProduto']]
-    df_produtos.rename(columns={
-        'Número do Pedido': 'numeroPedido',
-        'Nome do Produto': 'nomeProduto',
-        'Quantidade Comprada': 'quantidade'
-    }, inplace=True)
+    df_produtos = df_produtos[['Número do Pedido', 'nomeProduto', 'Quantidade Comprada', 'caracteristicaProduto']].rename(
+        columns={
+            'Número do Pedido': 'numeroPedido',
+            'Quantidade Comprada': 'quantidade'
+        }
+    )
 
     # Junção final
     df_final = pd.merge(df_produtos, df_vendas, on='numeroPedido', how='left')
