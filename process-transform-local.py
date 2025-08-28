@@ -30,7 +30,7 @@ def processXLSX(file_path, output_path):
         "Valor Total": "precoVenda",
         "Desconto do vendedor": "totalDesconto",
         "Nome do Produto": "nomeProduto",
-        "Quantidade do Produto": "quantidade",
+        "Quantidade": "quantidade",
         "Nome da variação": "caracteristicaProduto"
     }
 
