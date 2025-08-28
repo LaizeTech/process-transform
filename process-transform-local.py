@@ -1,59 +1,24 @@
-import boto3
-import pandas as pd
 import os
+import time
+import pandas as pd
 from datetime import datetime
 import re
 
-# Configurações
-BUCKET_ENTRADA = "meu-bucket-entrada"
-BUCKET_SAIDA = "meu-bucket-saida"
+# ===============================
+# VARIÁVEIS DE CONFIGURAÇÃO
+# ===============================
+DIRETORIO_ENTRADA = r"C:\Users\Ayrton Casa\Documents\SPTech\2025\PI\Projeto\bucket-raw"  # pasta monitorada
+DIRETORIO_SAIDA   = r"C:\Users\Ayrton Casa\Documents\SPTech\2025\PI\Projeto\bucket-trusted"    # pasta onde o CSV sai
+INTERVALO_VERIFICACAO = 2  # segundos entre as varreduras
+ESPERA_ESTABILIZACAO = 2   # segundos para checar se o arquivo terminou de copiar
 
-s3 = boto3.client("s3")
-
+# ===============================
+# FUNÇÕES DE NOMENCLAURA/TRANSFORMAÇÃO (inalteradas)
+# ===============================
 def generate_unique_filename(original_name, plataforma_id, suffix="_processado.csv"):
     base_name = os.path.splitext(os.path.basename(original_name))[0]
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     return f"{base_name}_{plataforma_id}_{timestamp}{suffix}"
-
-def lambda_handler(event, context):
-    #Pega o último arquivo do bucket
-    objects = s3.list_objects_v2(Bucket=BUCKET_ENTRADA)
-    if "Contents" not in objects:
-        print("Nenhum arquivo encontrado no bucket de entrada.")
-        return
-
-    latest_file = max(objects["Contents"], key=lambda x: x["LastModified"])
-    file_key = latest_file["Key"]
-    file_name = os.path.basename(file_key)
-    local_input_path = f"/tmp/{file_name}"
-
-    print(f"Último arquivo encontrado: {file_key}")
-
-    #Baixa o arquivo para /tmp
-    s3.download_file(BUCKET_ENTRADA, file_key, local_input_path)
-
-    #Decide o que fazer com base na extensão, define plataforma e processa
-    ext = file_name.lower().split('.')[-1]
-    if ext == "xlsx":
-        plataforma_id = 1
-        output_filename = generate_unique_filename(file_name, plataforma_id)
-        local_output_path = f"/tmp/{output_filename}"
-        processXLSX(local_input_path, local_output_path)
-
-    elif ext == "csv":
-        plataforma_id = 2
-        output_filename = generate_unique_filename(file_name, plataforma_id)
-        local_output_path = f"/tmp/{output_filename}"
-        processCSV(local_input_path, local_output_path)
-
-    else:
-        print(f"Extensão não suportada: {ext}")
-        return
-
-    
-    #Envia o resultado para o bucket de saída
-    s3.upload_file(local_output_path, BUCKET_SAIDA, output_filename)
-    print(f"✅ Arquivo processado enviado para {BUCKET_SAIDA}/{output_filename}")
 
 def processXLSX(file_path, output_path):
     df = pd.read_excel(file_path)
@@ -70,6 +35,10 @@ def processXLSX(file_path, output_path):
     }
 
     colunas_existentes = {orig: novo for orig, novo in colunas_mapeadas.items() if orig in df_filtrado.columns}
+
+    if not colunas_existentes:
+        raise ValueError("Nenhuma coluna esperada encontrada no Excel.")
+
     df_selecionado = df_filtrado[list(colunas_existentes.keys())].rename(columns=colunas_existentes)
     
     # Adicionar 'sem caracteristica' se a coluna caracteristicaProduto existir e tiver valores vazios
@@ -77,9 +46,9 @@ def processXLSX(file_path, output_path):
         df_selecionado['caracteristicaProduto'] = df_selecionado['caracteristicaProduto'].fillna('sem caracteristica')
     
     df_selecionado.to_csv(output_path, index=False, encoding="utf-8-sig")
+    print(f"Arquivo XLSX processado e salvo em: {output_path}")
 
 def processCSV(file_path, output_path):
-
     # Função para extrair característica (entre parênteses no final do nome)
     def extrair_caracteristica_e_nome(nome_produto):
         if pd.isna(nome_produto):
@@ -140,3 +109,78 @@ def processCSV(file_path, output_path):
     df_final['caracteristicaProduto'] = df_final['caracteristicaProduto'].fillna('sem caracteristica')
     
     df_final.to_csv(output_path, index=False, sep=';', encoding='utf-8-sig')
+    print(f"Arquivo CSV processado e salvo em: {output_path}")
+
+# ===============================
+# AUXILIARES DE MONITORAMENTO
+# ===============================
+def arquivo_pronto(caminho):
+    """Evita processar arquivo ainda sendo copiado: checa se o tamanho estabilizou."""
+    try:
+        tamanho1 = os.path.getsize(caminho)
+        time.sleep(ESPERA_ESTABILIZACAO)
+        tamanho2 = os.path.getsize(caminho)
+        return tamanho1 == tamanho2
+    except FileNotFoundError:
+        return False
+
+def processar_novo_arquivo(caminho_arquivo):
+    ext = os.path.splitext(caminho_arquivo)[1].lower()
+    if ext == ".xlsx":
+        plataforma_id = 1
+    elif ext == ".csv":
+        plataforma_id = 2
+    else:
+        print(f"Ignorando (extensão não suportada): {caminho_arquivo}")
+        return
+
+    output_filename = generate_unique_filename(caminho_arquivo, plataforma_id)
+    os.makedirs(DIRETORIO_SAIDA, exist_ok=True)
+    output_path = os.path.join(DIRETORIO_SAIDA, output_filename)
+
+    print(f"🔄 Processando: {caminho_arquivo}")
+    if ext == ".xlsx":
+        processXLSX(caminho_arquivo, output_path)
+    else:
+        processCSV(caminho_arquivo, output_path)
+
+# ===============================
+# LOOP DE MONITORAMENTO
+# ===============================
+if __name__ == "__main__":
+    print(f"👀 Monitorando: {DIRETORIO_ENTRADA}")
+    os.makedirs(DIRETORIO_ENTRADA, exist_ok=True)
+    os.makedirs(DIRETORIO_SAIDA, exist_ok=True)
+
+    vistos = {}  # caminho -> mtime já processado
+
+    while True:
+        try:
+            for nome in os.listdir(DIRETORIO_ENTRADA):
+                caminho = os.path.join(DIRETORIO_ENTRADA, nome)
+                if not os.path.isfile(caminho):
+                    continue
+
+                ext = os.path.splitext(nome)[1].lower()
+                if ext not in (".xlsx", ".csv"):
+                    continue
+
+                # Pula se ainda não estabilizou (arquivo em cópia)
+                if not arquivo_pronto(caminho):
+                    continue
+
+                mtime = os.path.getmtime(caminho)
+                # Processa se é novo ou foi modificado depois do último processamento
+                if caminho not in vistos or mtime > vistos[caminho]:
+                    processar_novo_arquivo(caminho)
+                    vistos[caminho] = mtime
+
+            time.sleep(INTERVALO_VERIFICACAO)
+
+        except KeyboardInterrupt:
+            print("\nEncerrado pelo usuário.")
+            break
+
+        except Exception as e:
+            print(f"Erro no monitoramento: {e}")
+            time.sleep(INTERVALO_VERIFICACAO)
