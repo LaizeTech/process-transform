@@ -7,8 +7,8 @@ import re
 # ===============================
 # VARIÁVEIS DE CONFIGURAÇÃO
 # ===============================
-DIRETORIO_ENTRADA = r"C:\Users\Ayrton Casa\Documents\SPTech\2025\PI\Projeto\bucket-raw"  # pasta monitorada
-DIRETORIO_SAIDA   = r"C:\Users\Ayrton Casa\Documents\SPTech\2025\PI\Projeto\bucket-trusted"    # pasta onde o CSV sai
+DIRETORIO_ENTRADA = r"C:\Users\Admin\OneDrive - Telefonica\Área de Trabalho\SPTECH\4º Semestre\P.I\bucket_raw"  # pasta monitorada
+DIRETORIO_SAIDA   = r"C:\Users\Admin\OneDrive - Telefonica\Área de Trabalho\SPTECH\4º Semestre\P.I\bucket_trusted"    # pasta onde o CSV sai
 INTERVALO_VERIFICACAO = 2  # segundos entre as varreduras
 ESPERA_ESTABILIZACAO = 2   # segundos para checar se o arquivo terminou de copiar
 
